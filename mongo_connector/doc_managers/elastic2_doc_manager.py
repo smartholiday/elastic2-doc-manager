@@ -115,6 +115,19 @@ class DocManager(DocManagerBase):
             parent_id = doc.pop(parent_field) if parent_field in doc else None
             return self._formatter.transform_value(parent_id)
 
+    def _get_routing_value(self, doc_type, doc):
+        """Get routing value from doc"""
+        if doc_type in self.routing:
+            if '_routing' in doc:
+                return doc.pop('_routing')
+
+            routing_field = self.routing[doc_type].get('routingField')
+            if not routing_field:
+                return None
+
+            routing_id = doc.pop(routing_field) if routing_field in doc else None
+            return self._formatter.transform_value(routing_id)
+
     def _search_doc_by_id(self, index, doc_type, doc_id):
         """Search document in Elasticsearch by _id"""
         result = self.elastic.search(index=index, doc_type=doc_type,
@@ -188,7 +201,7 @@ class DocManager(DocManagerBase):
         self.commit()
         index, doc_type = self._index_and_mapping(namespace)
 
-        if doc_type in self.routing and 'parentField' in self.routing[doc_type]:
+        if doc_type in self.routing and ('parentField' in self.routing[doc_type] or 'routingField' in self.routing[doc_type]):
             # We can't use get() here and have to do a full search instead.
             # This is due to the fact that Elasticsearch needs the parent ID to
             # know where to route the get request. We might not have the parent
@@ -201,12 +214,13 @@ class DocManager(DocManagerBase):
             document = self.elastic.get(index=index, doc_type=doc_type,
                                         id = u(document_id))
 
-
         updated = self.apply_update(document['_source'], update_spec)
         # _id is immutable in MongoDB, so won't have changed in update
         updated['_id'] = document['_id']
         if '_parent' in document:
             updated['_parent'] = document['_parent']
+        if '_routing' in document:
+            updated['_routing'] = document['_routing']
 
         self.upsert(updated, namespace, timestamp)
         # upsert() strips metadata, so only _id + fields in _source still here
@@ -223,16 +237,12 @@ class DocManager(DocManagerBase):
             "_ts": timestamp
         }
 
-        parent_id = self._get_parent_id(doc_type, doc)
-        # Index the source document, using lowercase namespace as index name.
-        if parent_id is None:
-            self.elastic.index(index=index, doc_type=doc_type,
-                               body=self._formatter.format_document(doc), id=doc_id,
-                               refresh=(self.auto_commit_interval == 0))
-        else:
-            self.elastic.index(index=index, doc_type=doc_type,
-                               body=self._formatter.format_document(doc), id=doc_id,
-                               parent=parent_id, refresh=(self.auto_commit_interval == 0))
+        suplimentary_args = self._build_suplimentary_args(doc_type, doc)
+        doc = self._formatter.format_document(doc)
+        self.elastic.index(index=index, doc_type=doc_type,
+                            body=doc, id=doc_id,
+                            refresh=(self.auto_commit_interval == 0),
+                            **suplimentary_args)
 
         # Index document metadata with original namespace (mixed upper/lower).
         self.elastic.index(index=self.meta_index_name, doc_type=self.meta_type,
@@ -267,8 +277,14 @@ class DocManager(DocManagerBase):
                 }
 
                 parent_id = self._get_parent_id(doc_type, doc)
+                routing_id = self._get_routing_value(doc_type, doc)
                 if parent_id is not None:
                     document_action["_parent"] = parent_id
+
+                if routing_id is not None:
+                    document_action["_routing"] = routing_id
+
+                if parent_id is not None or routing_id is not None:
                     document_action["_source"] = self._formatter.format_document(doc)
 
                 yield document_action
@@ -323,42 +339,46 @@ class DocManager(DocManagerBase):
 
         doc = self._formatter.format_document(doc)
         doc[self.attachment_field] = base64.b64encode(f.read()).decode()
+        suplimentary_args= self._build_suplimentary_args(doc_type, doc)
 
-        parent_id = self._get_parent_id(doc_type, doc)
-        if parent_id is None:
-            self.elastic.index(index=index, doc_type=doc_type,
-                               body=doc, id=doc_id,
-                               refresh=(self.auto_commit_interval == 0))
-        else:
-            self.elastic.index(index=index, doc_type=doc_type,
-                               body=doc, id=doc_id, parent=parent_id,
-                               refresh=(self.auto_commit_interval == 0))
+        self.elastic.index(index=index, doc_type=doc_type,
+                           body=doc, id=doc_id,
+                           refresh=(self.auto_commit_interval == 0),
+                           **suplimentary_args)
 
         self.elastic.index(index=self.meta_index_name, doc_type=self.meta_type,
                            body=bson.json_util.dumps(metadata), id=doc_id,
                            refresh=(self.auto_commit_interval == 0))
 
+    def _build_suplimentary_args(self, doc_type, doc):
+        suplimentary_args = {}
+        parent_id = self._get_parent_id(doc_type, doc)
+        if parent_id is not None:
+            suplimentary_args['parent'] = parent_id
+        routing_id = self._get_routing_value(doc_type, doc)
+        if routing_id is not None:
+            suplimentary_args['routing'] = routing_id
+
+        return suplimentary_args
+
     @wrap_exceptions
     def remove(self, document_id, namespace, timestamp):
         """Remove a document from Elasticsearch."""
         index, doc_type = self._index_and_mapping(namespace)
-        if doc_type in self.routing and 'parentField' in self.routing[doc_type]:
-            # We can't use delete() directly here and have to do a full search first.
-            # This is due to the fact that Elasticsearch needs the parent ID to
-            # know where to route the delete request. We might not have the parent
-            # ID available in our remove request though.
-            document = self._search_doc_by_id(index, doc_type, document_id)
-            if document is None:
-                LOG.error('Could not find document with ID "%s" in Elasticsearch to apply remove', u(document_id))
-                return
-            parent_id = self._get_parent_id(doc_type, document)
-            self.elastic.delete(index=index, doc_type=doc_type,
-                                id = u(document_id), parent = parent_id,
-                                refresh = (self.auto_commit_interval == 0))
-        else:
-            self.elastic.delete(index=index, doc_type=doc_type,
-                                id=u(document_id),
-                                refresh=(self.auto_commit_interval == 0))
+
+        # We can't use delete() directly here and have to do a full search first.
+        # This is due to the fact that Elasticsearch needs the parent ID to
+        # know where to route the delete request. We might not have the parent
+        # ID available in our remove request though.
+        document = self._search_doc_by_id(index, doc_type, document_id)
+        if document is None:
+            LOG.error('Could not find document with ID "%s" in Elasticsearch to apply remove', u(document_id))
+            return
+        suplimentary_args = self._build_suplimentary_args(doc_type, document)
+
+        self.elastic.delete(index=index, doc_type=doc_type,
+                            id=u(document_id),
+                            refresh=(self.auto_commit_interval == 0), **suplimentary_args)
 
         self.elastic.delete(index=self.meta_index_name, doc_type=self.meta_type,
                             id=u(document_id),
@@ -372,6 +392,8 @@ class DocManager(DocManagerBase):
             hit['_source']['_id'] = hit['_id']
             if '_parent' in hit:
                 hit['_source']['_parent'] = hit['_parent']
+            if '_routing' in hit:
+                hit['_source']['_routing'] = hit['_routing']
 
             yield hit['_source']
 
