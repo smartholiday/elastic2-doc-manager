@@ -237,12 +237,12 @@ class DocManager(DocManagerBase):
             "_ts": timestamp
         }
 
-        suplimentary_args = self._build_suplimentary_args(doc_type, doc)
+        additional_args = self._build_additional_args(doc_type, doc)
         doc = self._formatter.format_document(doc)
         self.elastic.index(index=index, doc_type=doc_type,
                             body=doc, id=doc_id,
                             refresh=(self.auto_commit_interval == 0),
-                            **suplimentary_args)
+                            **additional_args)
 
         # Index document metadata with original namespace (mixed upper/lower).
         self.elastic.index(index=self.meta_index_name, doc_type=self.meta_type,
@@ -339,27 +339,27 @@ class DocManager(DocManagerBase):
 
         doc = self._formatter.format_document(doc)
         doc[self.attachment_field] = base64.b64encode(f.read()).decode()
-        suplimentary_args= self._build_suplimentary_args(doc_type, doc)
+        additional_args= self._build_additional_args(doc_type, doc)
 
         self.elastic.index(index=index, doc_type=doc_type,
                            body=doc, id=doc_id,
                            refresh=(self.auto_commit_interval == 0),
-                           **suplimentary_args)
+                           **additional_args)
 
         self.elastic.index(index=self.meta_index_name, doc_type=self.meta_type,
                            body=bson.json_util.dumps(metadata), id=doc_id,
                            refresh=(self.auto_commit_interval == 0))
 
-    def _build_suplimentary_args(self, doc_type, doc):
-        suplimentary_args = {}
+    def _build_additional_args(self, doc_type, doc):
+        additional_args = {}
         parent_id = self._get_parent_id(doc_type, doc)
         if parent_id is not None:
-            suplimentary_args['parent'] = parent_id
+            additional_args['parent'] = parent_id
         routing_id = self._get_routing_value(doc_type, doc)
         if routing_id is not None:
-            suplimentary_args['routing'] = routing_id
+            additional_args['routing'] = routing_id
 
-        return suplimentary_args
+        return additional_args
 
     @wrap_exceptions
     def remove(self, document_id, namespace, timestamp):
@@ -374,11 +374,11 @@ class DocManager(DocManagerBase):
         if document is None:
             LOG.error('Could not find document with ID "%s" in Elasticsearch to apply remove', u(document_id))
             return
-        suplimentary_args = self._build_suplimentary_args(doc_type, document)
+        additional_args = self._build_additional_args(doc_type, document)
 
         self.elastic.delete(index=index, doc_type=doc_type,
                             id=u(document_id),
-                            refresh=(self.auto_commit_interval == 0), **suplimentary_args)
+                            refresh=(self.auto_commit_interval == 0), **additional_args)
 
         self.elastic.delete(index=self.meta_index_name, doc_type=self.meta_type,
                             id=u(document_id),
