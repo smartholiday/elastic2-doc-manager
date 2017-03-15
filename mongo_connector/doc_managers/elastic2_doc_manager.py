@@ -112,7 +112,7 @@ class DocManager(DocManagerBase):
             if not parent_field:
                 return None
 
-            parent_id = doc.pop(parent_field) if parent_field in doc else None
+            parent_id = doc.get(parent_field) if parent_field in doc else None
             return self._formatter.transform_value(parent_id)
 
     def _get_routing_value(self, doc_type, doc):
@@ -125,7 +125,7 @@ class DocManager(DocManagerBase):
             if not routing_field:
                 return None
 
-            routing_id = doc.pop(routing_field) if routing_field in doc else None
+            routing_id = doc.get(routing_field) if routing_field in doc else None
             return self._formatter.transform_value(routing_id)
 
     def _search_doc_by_id(self, index, doc_type, doc_id):
