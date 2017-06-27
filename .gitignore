@@ -1,5 +1,7 @@
 *.pyc
 *~
+*.egg
+*.egg-info
 .DS_Store
 /test/data
 /test/logs

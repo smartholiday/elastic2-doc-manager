@@ -199,6 +199,11 @@ class DocManager(DocManagerBase):
         self.meta_type = meta_type
         self.unique_key = unique_key
         self.chunk_size = chunk_size
+        self.routing = kwargs.get('routing', {})
+        if self.auto_commit_interval not in [None, 0]:
+            self.run_auto_commit()
+        self._formatter = DefaultDocumentFormatter()
+
         self.has_attachment_mapping = False
         self.attachment_field = attachment_field
         self.auto_commiter = AutoCommiter(self, self.auto_send_interval,
@@ -209,6 +214,48 @@ class DocManager(DocManagerBase):
         """Helper method for getting the index and type from a namespace."""
         index, doc_type = namespace.split('.', 1)
         return index.lower(), doc_type
+
+    def _get_parent_id(self, doc_type, doc):
+        """Get parent ID from doc"""
+        if doc_type in self.routing:
+            if '_parent' in doc:
+                return doc.pop('_parent')
+
+            parent_field = self.routing[doc_type].get('parentField')
+            if not parent_field:
+                return None
+
+            parent_id = doc.get(parent_field) if parent_field in doc else None
+            return self._formatter.transform_value(parent_id)
+
+    def _get_routing_value(self, doc_type, doc):
+        """Get routing value from doc"""
+        if doc_type in self.routing:
+            if '_routing' in doc:
+                return doc.pop('_routing')
+
+            routing_field = self.routing[doc_type].get('routingField')
+            if not routing_field:
+                return None
+
+            routing_id = doc.get(routing_field) if routing_field in doc else None
+            return self._formatter.transform_value(routing_id)
+
+    def _search_doc_by_id(self, index, doc_type, doc_id):
+        """Search document in Elasticsearch by _id"""
+        result = self.elastic.search(index=index, doc_type=doc_type,
+                                     body={
+                                         'query': {
+                                             'ids': {
+                                                 'type': doc_type,
+                                                 'values': [u(doc_id)]
+                                             }
+                                         }
+                                     })
+        if result['hits']['total'] == 1:
+            return result['hits']['hits'][0]
+        else:
+            return None
 
     def stop(self):
         """Stop the auto-commit thread."""
@@ -283,6 +330,10 @@ class DocManager(DocManagerBase):
             updated = self.apply_update(document, update_spec)
             # _id is immutable in MongoDB, so won't have changed in update
             updated['_id'] = document_id
+            if '_parent' in document:
+                updated['_parent'] = document['_parent']
+            if '_routing' in document:
+                updated['_routing'] = document['_routing']
             self.upsert(updated, namespace, timestamp)
         else:
             # Document source needs to be retrieved from Elasticsearch
@@ -349,6 +400,18 @@ class DocManager(DocManagerBase):
                         '_ts': timestamp
                     }
                 }
+
+                parent_id = self._get_parent_id(doc_type, doc)
+                routing_id = self._get_routing_value(doc_type, doc)
+                if parent_id is not None:
+                    document_action["_parent"] = parent_id
+
+                if routing_id is not None:
+                    document_action["_routing"] = routing_id
+
+                if parent_id is not None or routing_id is not None:
+                    document_action["_source"] = self._formatter.format_document(doc)
+
                 yield document_action
                 yield document_meta
             if doc is None:
@@ -401,6 +464,7 @@ class DocManager(DocManagerBase):
 
         doc = self._formatter.format_document(doc)
         doc[self.attachment_field] = base64.b64encode(f.read()).decode()
+        additional_args = self._build_additional_args(doc_type, doc)
 
         action = {
             '_op_type': 'index',
@@ -417,7 +481,18 @@ class DocManager(DocManagerBase):
             '_source': bson.json_util.dumps(metadata)
         }
 
-        self.index(action, meta_action)
+        self.index(action, meta_action, **additional_args)
+
+    def _build_additional_args(self, doc_type, doc):
+        additional_args = {}
+        parent_id = self._get_parent_id(doc_type, doc)
+        if parent_id is not None:
+            additional_args['parent'] = parent_id
+        routing_id = self._get_routing_value(doc_type, doc)
+        if routing_id is not None:
+            additional_args['routing'] = routing_id
+
+        return additional_args
 
     @wrap_exceptions
     def remove(self, document_id, namespace, timestamp):
@@ -446,6 +521,11 @@ class DocManager(DocManagerBase):
         for hit in scan(self.elastic, query=kwargs.pop('body', None),
                         scroll='10m', **kwargs):
             hit['_source']['_id'] = hit['_id']
+            if '_parent' in hit:
+                hit['_source']['_parent'] = hit['_parent']
+            if '_routing' in hit:
+                hit['_source']['_routing'] = hit['_routing']
+
             yield hit['_source']
 
     def search(self, start_ts, end_ts):
