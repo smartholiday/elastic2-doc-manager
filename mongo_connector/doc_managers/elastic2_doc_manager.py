@@ -184,6 +184,7 @@ class DocManager(DocManagerBase):
 
         self._formatter = DefaultDocumentFormatter()
         self.BulkBuffer = BulkBuffer(self)
+        self.routing = kwargs.get('routing', {})
 
         # As bulk operation can be done in another thread
         # lock is needed to prevent access to BulkBuffer
@@ -318,6 +319,7 @@ class DocManager(DocManagerBase):
         """
 
         index, doc_type = self._index_and_mapping(namespace)
+
         with self.lock:
             # Check if document source is stored in local buffer
             document = self.BulkBuffer.get_from_sources(index,
@@ -348,11 +350,19 @@ class DocManager(DocManagerBase):
         """Insert a document into Elasticsearch."""
         index, doc_type = self._index_and_mapping(namespace)
         # No need to duplicate '_id' in source document
-        doc_id = u(doc.pop("_id"))
+        doc_id = int(float(u(doc.pop("_id"))))
         metadata = {
             'ns': namespace,
             '_ts': timestamp
         }
+
+        parent_id = self._get_parent_id(doc_type, doc)
+        if parent_id is not None:
+            parent_id = int(float(parent_id))
+
+        routing_id = self._get_routing_value(doc_type, doc)
+        if routing_id is not None:
+            routing_id = int(float(routing_id))
 
         # Index the source document, using lowercase namespace as index name.
         action = {
@@ -371,6 +381,12 @@ class DocManager(DocManagerBase):
             '_source': bson.json_util.dumps(metadata)
         }
 
+        if parent_id is not None:
+            action["_parent"] = parent_id
+
+        if routing_id is not None:
+            action["_routing"] = routing_id
+
         self.index(action, meta_action, doc, update_spec)
 
         # Leave _id, since it's part of the original document
@@ -378,6 +394,7 @@ class DocManager(DocManagerBase):
 
     @wrap_exceptions
     def bulk_upsert(self, docs, namespace, timestamp):
+
         """Insert multiple documents into Elasticsearch."""
         def docs_to_upsert():
             doc = None
@@ -499,18 +516,22 @@ class DocManager(DocManagerBase):
         """Remove a document from Elasticsearch."""
         index, doc_type = self._index_and_mapping(namespace)
 
+        doc_id = int(float(u(document_id)))
         action = {
             '_op_type': 'delete',
             '_index': index,
             '_type': doc_type,
-            '_id': u(document_id)
+            '_id': doc_id,
         }
+
+        if doc_type in self.routing:
+            action['_routing'] = '*'
 
         meta_action = {
             '_op_type': 'delete',
             '_index': self.meta_index_name,
             '_type': self.meta_type,
-            '_id': u(document_id)
+            '_id': doc_id
         }
 
         self.index(action, meta_action)
@@ -686,12 +707,45 @@ class BulkBuffer(object):
 
     def get_docs_sources_from_ES(self):
         """Get document sources using MGET elasticsearch API"""
-        docs = [doc for doc, _, _, get_from_ES in self.doc_to_update if get_from_ES]
-        if docs:
-            documents = self.docman.elastic.mget(body={'docs': docs}, realtime=True)
-            return iter(documents['docs'])
+        docs_to_query = [doc for doc, _, _, get_from_ES in self.doc_to_update if get_from_ES]
+
+        if docs_to_query:
+            es_query = self.build_query(docs_to_query)
+            es_found_docs = self.execute_query(es_query, docs_to_query[0]['_index'])
+            return iter(es_found_docs['hits']['hits'])
         else:
             return iter([])
+
+    def build_query(self, docs_to_query):
+        es_subquery = []
+        for doc in docs_to_query:
+            es_subquery.append(self.build_search_subquery(doc))
+        query = {
+                    "query": {
+                        "bool": {
+                            "should": [
+                                es_subquery
+                            ]
+                        }
+                    }
+                }
+
+        return query
+
+    def execute_query(self, query_body, index):
+        documents = self.docman.elastic.search(index=index,
+                                        body=query_body)
+        return documents
+
+    def build_search_subquery(self, doc):
+        return {
+                "bool": {
+                    "must": [
+                        {"match": {"_id": int(float(doc['_id']))}},
+                        {"match": {"_type": str(doc['_type'])}}
+                    ]
+                }
+            }
 
     @wrap_exceptions
     def update_sources(self):
@@ -699,15 +753,21 @@ class BulkBuffer(object):
         ES_documents = self.get_docs_sources_from_ES()
 
         for doc, update_spec, action_buffer_index, get_from_ES in self.doc_to_update:
+            routing = None
+            parent = None
             if get_from_ES:
                 # Update source based on response from ES
                 ES_doc = next(ES_documents)
-                if ES_doc['found']:
+                if ES_doc['_source']:
                     source = ES_doc['_source']
+                    if '_routing' in ES_doc:
+                        routing = ES_doc['_routing']
+                    if '_parent' in ES_doc:
+                        parent = ES_doc['_parent']
                 else:
                     # Document not found in elasticsearch,
                     # Seems like something went wrong during replication
-                    LOG.error("mGET: Document id: %s has not been found "
+                    LOG.error("_search: Document id: %s has not been found "
                               "in Elasticsearch. Due to that "
                               "following update failed: %s", doc['_id'], update_spec)
                     self.reset_action(action_buffer_index)
@@ -735,6 +795,13 @@ class BulkBuffer(object):
             self.add_to_sources(doc, updated)
 
             self.action_buffer[action_buffer_index]['_source'] = self.docman._formatter.format_document(updated)
+            if routing is not None:
+                self.action_buffer[action_buffer_index]['_routing'] = routing
+                doc['_routing'] = routing
+            if parent is not None:
+                self.action_buffer[action_buffer_index]['_parent'] = parent
+                doc['_parent'] = parent
+            self.action_buffer[action_buffer_index]['_id'] = int(float(self.action_buffer[action_buffer_index]['_id']))
 
         # Remove empty actions if there were errors
         self.action_buffer = [each_action for each_action in self.action_buffer if each_action]
@@ -746,7 +813,7 @@ class BulkBuffer(object):
 
     def add_to_sources(self, action, doc_source):
         """Store sources locally"""
-        mapping = self.sources.setdefault(action['_index'], {}).setdefault(action['_type'], {})
+        mapping =    self.sources.setdefault(action['_index'], {}).setdefault(action['_type'], {})
         mapping[action['_id']] = doc_source
 
     def get_from_sources(self, index, doc_type, document_id):
