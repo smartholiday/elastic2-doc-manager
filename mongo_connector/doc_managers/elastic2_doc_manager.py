@@ -788,8 +788,8 @@ class BulkBuffer(object):
             parent = None
             if get_from_ES:
                 # Update source based on response from ES
-                ES_doc = next(ES_documents)
-                if ES_doc['_source']:
+                ES_doc = next(ES_documents, None)
+                if ES_doc is not None and ES_doc['_source']:
                     source = ES_doc['_source']
                     if '_routing' in ES_doc:
                         routing = ES_doc['_routing']
