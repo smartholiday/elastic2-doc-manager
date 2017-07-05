@@ -216,6 +216,16 @@ class DocManager(DocManagerBase):
         index, doc_type = namespace.split('.', 1)
         return index.lower(), doc_type
 
+    def is_float(self, str):
+        try:
+            if str is not None:
+                float(str)
+            else:
+                return False
+        except ValueError:
+            return False
+        return True
+
     def _get_parent_id(self, doc_type, doc):
         """Get parent ID from doc"""
         if doc_type in self.routing:
@@ -227,7 +237,15 @@ class DocManager(DocManagerBase):
                 return None
 
             parent_id = doc.get(parent_field) if parent_field in doc else None
-            return self._formatter.transform_value(parent_id)
+            formated_parent_id = self._formatter.transform_value(parent_id)
+
+            if formated_parent_id is None:
+                return formated_parent_id
+
+            if self.is_float(formated_parent_id):
+                return int(float(formated_parent_id))
+            else:
+                return str(formated_parent_id)
 
     def _get_routing_value(self, doc_type, doc):
         """Get routing value from doc"""
@@ -240,7 +258,15 @@ class DocManager(DocManagerBase):
                 return None
 
             routing_id = doc.get(routing_field) if routing_field in doc else None
-            return self._formatter.transform_value(routing_id)
+            formated_routing_id = self._formatter.transform_value(routing_id)
+
+            if formated_routing_id is None:
+                return formated_routing_id
+
+            if self.is_float(routing_id):
+                return int(float(formated_routing_id))
+            else:
+                return str(formated_routing_id)
 
     def _search_doc_by_id(self, index, doc_type, doc_id):
         """Search document in Elasticsearch by _id"""
@@ -350,19 +376,19 @@ class DocManager(DocManagerBase):
         """Insert a document into Elasticsearch."""
         index, doc_type = self._index_and_mapping(namespace)
         # No need to duplicate '_id' in source document
-        doc_id = int(float(u(doc.pop("_id"))))
+        doc_id = u(doc.pop("_id"))
+        if self.is_float(doc_id):
+            doc_id = int(float(doc_id))
+        else:
+            doc_id = str(doc_id)
+
         metadata = {
             'ns': namespace,
             '_ts': timestamp
         }
 
         parent_id = self._get_parent_id(doc_type, doc)
-        if parent_id is not None:
-            parent_id = int(float(parent_id))
-
         routing_id = self._get_routing_value(doc_type, doc)
-        if routing_id is not None:
-            routing_id = int(float(routing_id))
 
         # Index the source document, using lowercase namespace as index name.
         action = {
@@ -516,7 +542,12 @@ class DocManager(DocManagerBase):
         """Remove a document from Elasticsearch."""
         index, doc_type = self._index_and_mapping(namespace)
 
-        doc_id = int(float(u(document_id)))
+        doc_id = u(document_id)
+        if self.is_float(doc_id):
+            doc_id = int(float(doc_id))
+        else:
+            doc_id = str(doc_id)
+
         action = {
             '_op_type': 'delete',
             '_index': index,
@@ -741,7 +772,7 @@ class BulkBuffer(object):
         return {
                 "bool": {
                     "must": [
-                        {"match": {"_id": int(float(doc['_id']))}},
+                        {"match": {"_id": str(doc['_id'])}},
                         {"match": {"_type": str(doc['_type'])}}
                     ]
                 }
@@ -801,7 +832,7 @@ class BulkBuffer(object):
             if parent is not None:
                 self.action_buffer[action_buffer_index]['_parent'] = parent
                 doc['_parent'] = parent
-            self.action_buffer[action_buffer_index]['_id'] = int(float(self.action_buffer[action_buffer_index]['_id']))
+            self.action_buffer[action_buffer_index]['_id'] = str(self.action_buffer[action_buffer_index]['_id'])
 
         # Remove empty actions if there were errors
         self.action_buffer = [each_action for each_action in self.action_buffer if each_action]
