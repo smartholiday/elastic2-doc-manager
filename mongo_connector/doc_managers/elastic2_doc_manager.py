@@ -373,6 +373,7 @@ class DocManager(DocManagerBase):
 
     @wrap_exceptions
     def upsert(self, doc, namespace, timestamp, update_spec=None):
+        LOG.error("BBBBBBBBBBBBBBB %s | %s", doc, namespace)
         """Insert a document into Elasticsearch."""
         index, doc_type = self._index_and_mapping(namespace)
         # No need to duplicate '_id' in source document
@@ -539,6 +540,7 @@ class DocManager(DocManagerBase):
 
     @wrap_exceptions
     def remove(self, document_id, namespace, timestamp):
+        LOG.error("CCCCCCCCCCCCC %s | %s", document_id, namespace)
         """Remove a document from Elasticsearch."""
         index, doc_type = self._index_and_mapping(namespace)
 
@@ -727,6 +729,7 @@ class BulkBuffer(object):
             True - if marking document for the first time in this bulk
             False - if document has been already marked
         """
+        LOG.error("AAAAAAAAAAAAA %s", action)
         mapping_ids = self.doc_to_get.setdefault(
             action['_index'], {}).setdefault(action['_type'], set())
         if action['_id'] in mapping_ids:
@@ -810,7 +813,7 @@ class BulkBuffer(object):
                                                doc['_type'],
                                                doc['_id'])
                 if not source:
-                    LOG.error("mGET: Document id: %s has not been found "
+                    LOG.error("search: Document id: %s has not been found "
                               "in local sources. Due to that following "
                               "update failed: %s", doc["_id"], update_spec)
                     self.reset_action(action_buffer_index)
