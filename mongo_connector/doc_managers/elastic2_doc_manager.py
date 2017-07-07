@@ -373,7 +373,6 @@ class DocManager(DocManagerBase):
 
     @wrap_exceptions
     def upsert(self, doc, namespace, timestamp, update_spec=None):
-        LOG.error("BBBBBBBBBBBBBBB %s | %s", doc, namespace)
         """Insert a document into Elasticsearch."""
         index, doc_type = self._index_and_mapping(namespace)
         # No need to duplicate '_id' in source document
@@ -540,7 +539,6 @@ class DocManager(DocManagerBase):
 
     @wrap_exceptions
     def remove(self, document_id, namespace, timestamp):
-        LOG.error("CCCCCCCCCCCCC %s | %s", document_id, namespace)
         """Remove a document from Elasticsearch."""
         index, doc_type = self._index_and_mapping(namespace)
 
@@ -554,11 +552,8 @@ class DocManager(DocManagerBase):
             '_op_type': 'delete',
             '_index': index,
             '_type': doc_type,
-            '_id': doc_id,
+            '_id': doc_id
         }
-
-        if doc_type in self.routing:
-            action['_routing'] = '*'
 
         meta_action = {
             '_op_type': 'delete',
@@ -729,7 +724,6 @@ class BulkBuffer(object):
             True - if marking document for the first time in this bulk
             False - if document has been already marked
         """
-        LOG.error("AAAAAAAAAAAAA %s", action)
         mapping_ids = self.doc_to_get.setdefault(
             action['_index'], {}).setdefault(action['_type'], set())
         if action['_id'] in mapping_ids:
@@ -739,13 +733,22 @@ class BulkBuffer(object):
             mapping_ids.add(action['_id'])
             return True
 
-    def get_docs_sources_from_ES(self):
-        """Get document sources using MGET elasticsearch API"""
-        docs_to_query = [doc for doc, _, _, get_from_ES in self.doc_to_update if get_from_ES]
+    def get_docs_sources_from_ES(self, doc_to_update):
+        """Get document sources using _search elasticsearch API"""
+        docs_to_query = [doc for doc, _, _, get_from_ES in doc_to_update if get_from_ES]
 
         if docs_to_query:
             es_query = self.build_query(docs_to_query)
             es_found_docs = self.execute_query(es_query, docs_to_query[0]['_index'])
+            return iter(es_found_docs['hits']['hits'])
+        else:
+            return iter([])
+
+    def get_docs_to_delete_sources_from_ES(self, docs_to_delete):
+        """Get document sources using _search elasticsearch API"""
+        if docs_to_delete:
+            es_query = self.build_query(docs_to_delete)
+            es_found_docs = self.execute_query(es_query, docs_to_delete[0]['_index'])
             return iter(es_found_docs['hits']['hits'])
         else:
             return iter([])
@@ -784,7 +787,7 @@ class BulkBuffer(object):
     @wrap_exceptions
     def update_sources(self):
         """Update local sources based on response from Elasticsearch"""
-        ES_documents = self.get_docs_sources_from_ES()
+        ES_documents = self.get_docs_sources_from_ES(self.doc_to_update)
 
         for doc, update_spec, action_buffer_index, get_from_ES in self.doc_to_update:
             routing = None
@@ -840,6 +843,46 @@ class BulkBuffer(object):
         # Remove empty actions if there were errors
         self.action_buffer = [each_action for each_action in self.action_buffer if each_action]
 
+    @wrap_exceptions
+    def update_documents_to_be_deleted(self):
+        """Update local sources based on response from Elasticsearch"""
+        docs_to_query_for_info = []
+
+        for doc in self.action_buffer:
+            if doc['_op_type'] == "delete":
+                if doc['_type'] in self.docman.routing:
+                    docs_to_query_for_info.append(doc)
+
+        ES_documents = self.get_docs_to_delete_sources_from_ES(docs_to_query_for_info)
+        if ES_documents is not None:
+            for ES_doc in ES_documents:
+                routing = None
+                parent = None
+                if ES_doc is not None and ES_doc['_source']:
+                    source = ES_doc['_source']
+                    if '_routing' in ES_doc:
+                        routing = ES_doc['_routing']
+                    if '_parent' in ES_doc:
+                        parent = ES_doc['_parent']
+                else:
+                    # Document not found in elasticsearch,
+                    # Seems like something went wrong during replication
+                    LOG.error("_search: Document id: %s has not been found "
+                              "in Elasticsearch. Due to that "
+                              "the delete failed.", doc['_id'])
+                    continue
+                if routing is not None:
+                    list_index = self.find_list_index(self.action_buffer, ES_doc)
+                    # self.action_buffer[0]['_routing'] = routing
+                    if(list_index > -1):
+                        self.action_buffer[list_index]['_routing'] = routing
+
+    def find_list_index(self, lst, value):
+        for idx, doc in enumerate(lst):
+            if doc['_type'] == value['_type'] and str(doc['_id']) == str(value['_id']):
+                return idx
+        return -1
+
     def reset_action(self, action_buffer_index):
         """Reset specific action as update failed"""
         self.action_buffer[action_buffer_index] = {}
@@ -847,7 +890,7 @@ class BulkBuffer(object):
 
     def add_to_sources(self, action, doc_source):
         """Store sources locally"""
-        mapping =    self.sources.setdefault(action['_index'], {}).setdefault(action['_type'], {})
+        mapping = self.sources.setdefault(action['_index'], {}).setdefault(action['_type'], {})
         mapping[action['_id']] = doc_source
 
     def get_from_sources(self, index, doc_type, document_id):
@@ -872,6 +915,8 @@ class BulkBuffer(object):
         # and they are not in local buffer
         if self.doc_to_update:
             self.update_sources()
+
+        self.update_documents_to_be_deleted()
 
         ES_buffer = self.action_buffer
         self.clean_up()
