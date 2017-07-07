@@ -794,7 +794,7 @@ class BulkBuffer(object):
             parent = None
             if get_from_ES:
                 # Update source based on response from ES
-                ES_doc = next(ES_documents, None)
+                ES_doc = self.find_in_ES_fetched(ES_documents, doc)
                 if ES_doc is not None and ES_doc['_source']:
                     source = ES_doc['_source']
                     if '_routing' in ES_doc:
@@ -843,6 +843,12 @@ class BulkBuffer(object):
         # Remove empty actions if there were errors
         self.action_buffer = [each_action for each_action in self.action_buffer if each_action]
 
+    def find_in_ES_fetched(self, lst, value):
+        for doc in lst:
+            if doc['_type'] == value['_type'] and str(doc['_id']) == str(value['_id']):
+                return doc
+        return None
+
     @wrap_exceptions
     def update_documents_to_be_deleted(self):
         """Update local sources based on response from Elasticsearch"""
@@ -874,14 +880,17 @@ class BulkBuffer(object):
                 if routing is not None:
                     list_index = self.find_list_index(self.action_buffer, ES_doc)
                     # self.action_buffer[0]['_routing'] = routing
-                    if(list_index > -1):
-                        self.action_buffer[list_index]['_routing'] = routing
+                    if list_index is not None:
+                        for idx in list_index:
+                            self.action_buffer[idx]['_routing'] = routing
 
     def find_list_index(self, lst, value):
+        match_index = []
         for idx, doc in enumerate(lst):
             if doc['_type'] == value['_type'] and str(doc['_id']) == str(value['_id']):
-                return idx
-        return -1
+                match_index.append(idx)
+                return match_index
+        return None
 
     def reset_action(self, action_buffer_index):
         """Reset specific action as update failed"""
