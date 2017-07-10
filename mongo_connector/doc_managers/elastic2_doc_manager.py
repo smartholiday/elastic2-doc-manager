@@ -686,13 +686,22 @@ class BulkBuffer(object):
         # it means that doc source needs to be retrieved
         # from Elasticsearch. It means also that source
         # is not stored in local buffer
+        LOG.error("DDDDDDDDDDDDDDDDDD %s | %s | %s | %s ", action, meta_action, doc_source, update_spec)
         if update_spec:
-            self.bulk_index(action, meta_action)
+            id_in_action_buffer = self.is_doc_in_action_buffer(action)
+            if id_in_action_buffer > -1:
+                fields_to_update = update_spec['$set']
+                if fields_to_update is not None:
+                    for field in fields_to_update:
+                        LOG.error("YYYYYYYYYYYYYYYYYYYYY %s ||| %s", field, fields_to_update)
+                        self.action_buffer[id_in_action_buffer]['_source'][field] = fields_to_update[field]
 
-            # -1 -> to get latest index number
-            # -1 -> to get action instead of meta_action
-            # Update document based on source retrieved from ES
-            self.add_doc_to_update(action, update_spec, len(self.action_buffer) - 2)
+            else:
+                self.bulk_index(action, meta_action)
+                # -1 -> to get latest index number
+                # -1 -> to get action instead of meta_action
+                # Update document based on source retrieved from ES
+                self.add_doc_to_update(action, update_spec, len(self.action_buffer) - 2)
         else:
             # Insert and update operations provide source
             # Store it in local buffer and use for comming updates
@@ -702,6 +711,12 @@ class BulkBuffer(object):
             if doc_source:
                 self.add_to_sources(action, doc_source)
             self.bulk_index(action, meta_action)
+
+    def is_doc_in_action_buffer(self, action):
+        for idx, doc in enumerate(self.action_buffer):
+            if doc['_type'] == action['_type'] and doc['_id'] == action['_id']:
+                return idx
+        return -1
 
     def add_doc_to_update(self, action, update_spec, action_buffer_index):
         """
@@ -726,6 +741,8 @@ class BulkBuffer(object):
         """
         mapping_ids = self.doc_to_get.setdefault(
             action['_index'], {}).setdefault(action['_type'], set())
+
+        LOG.error("EEEEEEEEEEEEEEEEE %s", mapping_ids)
         if action['_id'] in mapping_ids:
             # There is an update on this id already
             return False
@@ -898,6 +915,7 @@ class BulkBuffer(object):
         self.action_buffer[action_buffer_index + 1] = {}
 
     def add_to_sources(self, action, doc_source):
+        LOG.error("AAAAAAAAAAAAAAAa %s | %s ", action, doc_source)
         """Store sources locally"""
         mapping = self.sources.setdefault(action['_index'], {}).setdefault(action['_type'], {})
         mapping[action['_id']] = doc_source
