@@ -689,10 +689,15 @@ class BulkBuffer(object):
         if update_spec:
             id_in_action_buffer = self.is_doc_in_action_buffer(action)
             if id_in_action_buffer > -1:
-                fields_to_update = update_spec['$set']
-                if fields_to_update is not None:
-                    for field in fields_to_update:
-                        self.action_buffer[id_in_action_buffer]['_source'][field] = fields_to_update[field]
+                if "$set" in update_spec:
+                    fields_to_set = update_spec['$set']
+                    if fields_to_set is not None:
+                        for field in fields_to_set:
+                            self.action_buffer[id_in_action_buffer]['_source'][field] = fields_to_set[field]
+                if "$unset" in update_spec:
+                    fields_to_unset = update_spec['$unset']
+                    for field in fields_to_unset:
+                        del self.action_buffer[id_in_action_buffer]['_source'][field]
             else:
                 self.bulk_index(action, meta_action)
                 # -1 -> to get latest index number
