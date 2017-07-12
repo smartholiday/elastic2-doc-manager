@@ -776,6 +776,8 @@ class BulkBuffer(object):
         for doc in docs_to_query:
             es_subquery.append(self.build_search_subquery(doc))
         query = {
+                    "from" : 0,
+                    "size" : DEFAULT_MAX_BULK,
                     "query": {
                         "bool": {
                             "should": [
