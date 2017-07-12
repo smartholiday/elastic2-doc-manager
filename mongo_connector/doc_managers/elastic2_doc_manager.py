@@ -865,7 +865,7 @@ class BulkBuffer(object):
 
     def find_in_ES_fetched(self, lst, value):
         for doc in lst:
-            if doc['_type'] == value['_type'] and str(doc['_id']) == str(value['_id']):
+            if doc['_type'] == value['_type'] and u(doc['_id']) == u(value['_id']):
                 return doc
         return None
 
