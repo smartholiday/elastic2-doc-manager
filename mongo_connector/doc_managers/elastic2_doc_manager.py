@@ -815,8 +815,7 @@ class BulkBuffer(object):
             if get_from_ES:
                 # Update source based on response from ES
                 ES_doc = self.find_in_ES_fetched(ES_documents, doc)
-                if ES_doc is not None and ES_doc['_source']:
-                    source = ES_doc['_source']
+                if ES_doc is not None:
                     if '_routing' in ES_doc:
                         routing = ES_doc['_routing']
                     if '_parent' in ES_doc:
