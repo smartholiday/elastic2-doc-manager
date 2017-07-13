@@ -767,7 +767,7 @@ class BulkBuffer(object):
         if docs_to_delete:
             es_query = self.build_query(docs_to_delete)
             es_found_docs = self.execute_query(es_query, docs_to_delete[0]['_index'])
-            return iter(es_found_docs['hits']['hits'])
+            return es_found_docs['hits']['hits']
         else:
             return iter([])
 
