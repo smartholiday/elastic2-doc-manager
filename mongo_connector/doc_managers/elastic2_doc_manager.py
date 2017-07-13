@@ -865,8 +865,10 @@ class BulkBuffer(object):
 
     def find_in_ES_fetched(self, lst, value):
         for doc in lst:
-            if doc['_type'] == value['_type'] and u(doc['_id']) == u(value['_id']):
+            LOG.error("AAAAAAAAAAAAAAAAAa %s | %s ", doc, value)
+            if u(doc[u'_type']) == u(value['_type']) and u(doc['_id']) == u(value['_id']):
                 return doc
+        LOG.error("BBBBBBBBBBBBBBBBB %s ", doc)
         return None
 
     @wrap_exceptions
