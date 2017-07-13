@@ -868,7 +868,7 @@ class BulkBuffer(object):
             LOG.error("AAAAAAAAAAAAAAAAAa %s | %s ", doc, value)
             if u(doc[u'_type']) == u(value['_type']) and u(doc['_id']) == u(value['_id']):
                 return doc
-        LOG.error("BBBBBBBBBBBBBBBBB %s ", doc)
+        LOG.error("BBBBBBBBBBBBBBBBB %s ", value)
         return None
 
     @wrap_exceptions
