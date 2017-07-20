@@ -760,7 +760,7 @@ class BulkBuffer(object):
             es_found_docs = self.execute_query(es_query, docs_to_query[0]['_index'])
             return es_found_docs['hits']['hits']
         else:
-            return iter([])
+            return []
 
     def get_docs_to_delete_sources_from_ES(self, docs_to_delete):
         """Get document sources using _search elasticsearch API"""
@@ -769,7 +769,7 @@ class BulkBuffer(object):
             es_found_docs = self.execute_query(es_query, docs_to_delete[0]['_index'])
             return es_found_docs['hits']['hits']
         else:
-            return iter([])
+            return []
 
     def build_query(self, docs_to_query):
         es_subquery = []
