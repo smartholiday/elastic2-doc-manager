@@ -874,38 +874,50 @@ class BulkBuffer(object):
         """Update local sources based on response from Elasticsearch"""
         docs_to_query_for_info = []
 
+        # Get from buffer all documents to be deleted and needing a routing value
         for doc in self.action_buffer:
             if doc['_op_type'] == "delete":
                 if doc['_type'] in self.docman.routing:
                     docs_to_query_for_info.append(doc)
 
-        parent = None
-        routing = None
+        # Search in buffer if for any document to be deleted there is also a upsert request for the same document
+        # that would allow us to get routing informations
         for idxd, marked_doc in enumerate(docs_to_query_for_info):
+            parent = None
+            routing = None
+
+            # For any document to be deleted search in buffer if there is an upsert request for the same document
+            # and get routing fields
             for idx, doc in enumerate(self.action_buffer):
                 if doc['_type'] == marked_doc['_type'] and doc['_id'] == marked_doc['_id'] and doc['_op_type'] == "index":
                     if '_parent' in doc:
                         parent = doc['_parent']
                     if '_routing' in doc:
                         routing = doc['_routing']
-                    continue
-                if doc['_type'] == marked_doc['_type'] and doc['_id'] == marked_doc['_id'] and doc['_op_type'] == "delete":
-                    if parent is not None:
-                        self.action_buffer[idx]['_parent'] = parent
-                    if routing is not None:
-                        self.action_buffer[idx]['_routing'] = routing
-                    if '_parent' in self.action_buffer[idx] or '_routing' in self.action_buffer[idx]:
-                        del docs_to_query_for_info[idxd]
-                    parent = None
-                    routing = None
+                    break
 
+            # If for a document to be deleted we have found routing values we will update into the buffer that document to
+            # be deleted with these routing values
+            if parent is not None or routing is not None:
+                for idx, doc in enumerate(self.action_buffer):
+                    if doc['_type'] == marked_doc['_type'] and doc['_id'] == marked_doc['_id'] and doc['_op_type'] == "delete":
+                        if parent is not None:
+                            self.action_buffer[idx]['_parent'] = parent
+                        if routing is not None:
+                            self.action_buffer[idx]['_routing'] = routing
+                        if '_parent' in self.action_buffer[idx] or '_routing' in self.action_buffer[idx]:
+                            del docs_to_query_for_info[idxd]
+                            break
+
+        # For all documents be deleted get sources from ES
         ES_documents = self.get_docs_to_delete_sources_from_ES(docs_to_query_for_info)
         if ES_documents is not None:
             for ES_doc in ES_documents:
                 routing = None
                 parent = None
+
+                # For each document from ES get informations about parent and routing if these exist
                 if ES_doc is not None and ES_doc['_source']:
-                    source = ES_doc['_source']
                     if '_routing' in ES_doc:
                         routing = ES_doc['_routing']
                     if '_parent' in ES_doc:
@@ -917,12 +929,19 @@ class BulkBuffer(object):
                               "in Elasticsearch. Due to that "
                               "the delete failed.", doc['_id'])
                     continue
+
+                #Update bufferd document to be deleted with informations about parent/routing
                 if routing is not None:
                     list_index = self.find_list_index(self.action_buffer, ES_doc)
-                    # self.action_buffer[0]['_routing'] = routing
                     if list_index is not None:
                         for idx in list_index:
                             self.action_buffer[idx]['_routing'] = routing
+
+                if parent is not None:
+                    list_index = self.find_list_index(self.action_buffer, ES_doc)
+                    if list_index is not None:
+                        for idx in list_index:
+                            self.action_buffer[idx]['_parent'] = parent
 
     def find_list_index(self, lst, value):
         match_index = []
