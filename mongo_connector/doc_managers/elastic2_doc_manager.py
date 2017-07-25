@@ -873,6 +873,7 @@ class BulkBuffer(object):
     def update_documents_to_be_deleted(self):
         """Update local sources based on response from Elasticsearch"""
         docs_to_query_for_info = []
+        list_idx_of_docs_to_delete = []
 
         # Get from buffer all documents to be deleted and needing a routing value
         for doc in self.action_buffer:
@@ -906,8 +907,11 @@ class BulkBuffer(object):
                         if routing is not None:
                             self.action_buffer[idx]['_routing'] = routing
                         if '_parent' in self.action_buffer[idx] or '_routing' in self.action_buffer[idx]:
-                            del docs_to_query_for_info[idxd]
+                            list_idx_of_docs_to_delete.append(idxd)
                             break
+
+        for i in list_idx_of_docs_to_delete:
+            del docs_to_query_for_info[i]
 
         # For all documents be deleted get sources from ES
         ES_documents = self.get_docs_to_delete_sources_from_ES(docs_to_query_for_info)
