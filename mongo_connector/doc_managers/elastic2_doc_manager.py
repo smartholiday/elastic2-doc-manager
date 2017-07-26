@@ -162,7 +162,7 @@ class DocManager(DocManagerBase):
     """
 
     def __init__(self, url, auto_commit_interval=DEFAULT_COMMIT_INTERVAL,
-                 unique_key='_id', chunk_size=500,
+                 unique_key='_id', chunk_size=450,
                  meta_index_name="mongodb_meta", meta_type="mongodb_meta",
                  attachment_field="content",
                  **kwargs):
@@ -753,7 +753,8 @@ class BulkBuffer(object):
 
     def get_docs_sources_from_ES(self, doc_to_update):
         """Get document sources using _search elasticsearch API"""
-        docs_to_query = [doc for doc, _, _, get_from_ES in doc_to_update if get_from_ES]
+        # docs_to_query = [doc for doc, _, _, get_from_ES in doc_to_update if get_from_ES]
+        docs_to_query = [doc for doc, _, _, get_from_ES in doc_to_update]
 
         if docs_to_query:
             es_query = self.build_query(docs_to_query)
@@ -762,7 +763,7 @@ class BulkBuffer(object):
         else:
             return []
 
-    def get_docs_to_delete_sources_from_ES(self, docs_to_delete):
+    def get_docs_to_update_sources_from_ES(self, docs_to_delete):
         """Get document sources using _search elasticsearch API"""
         if docs_to_delete:
             es_query = self.build_query(docs_to_delete)
@@ -914,7 +915,7 @@ class BulkBuffer(object):
             del docs_to_query_for_info[i]
 
         # For all documents be deleted get sources from ES
-        ES_documents = self.get_docs_to_delete_sources_from_ES(docs_to_query_for_info)
+        ES_documents = self.get_docs_to_update_sources_from_ES(docs_to_query_for_info)
         if ES_documents is not None:
             for ES_doc in ES_documents:
                 routing = None
@@ -946,6 +947,149 @@ class BulkBuffer(object):
                     if list_index is not None:
                         for idx in list_index:
                             self.action_buffer[idx]['_parent'] = parent
+
+    @wrap_exceptions
+    def update_documents_from_buffer(self):
+        """Update buffered sources based on response from Elasticsearch"""
+
+        docs_to_query_ES_for_info = []
+        list_idx_of_docs_to_remove_from_query_list = []
+        #Map of documents having parent/routing information
+        dict_idType_routing = {}
+
+        # Get from buffer all documents needing a routing value or if having routing values put them into a map
+        # to be used by other documents not having these informations
+        for doc in self.action_buffer:
+            parent = None
+            routing = None
+            if doc['_type'] in self.docman.routing:
+                if '_parent' in doc:
+                    parent = doc['_parent']
+                if '_routing' in doc:
+                    routing = doc['_routing']
+
+                if parent is not None or routing is not None:
+                    dict_idType_routing[str(doc['_id']) + str(u(doc['_type']))] =  doc
+                else:
+                    docs_to_query_ES_for_info.append(doc)
+
+        for idxd, marked_doc in enumerate(docs_to_query_ES_for_info):
+            dict_key = str(marked_doc['_id']) + str(u(marked_doc['_type']))
+            if dict_key in dict_idType_routing:
+                list_idx_of_docs_to_remove_from_query_list.append(idxd)
+
+        # Remove entries that have already been found in buffer
+        for i in list_idx_of_docs_to_remove_from_query_list:
+            del docs_to_query_ES_for_info[i]
+
+        # For all documents be deleted get sources from ES
+        ES_documents = self.get_docs_to_update_sources_from_ES(docs_to_query_ES_for_info)
+        if ES_documents is not None:
+            for ES_doc in ES_documents:
+                routing = None
+                parent = None
+
+                # For each document from ES get informations about parent and routing if these exist
+                if ES_doc is not None and ES_doc['_source']:
+                    if '_routing' in ES_doc:
+                        routing = ES_doc['_routing']
+                    if '_parent' in ES_doc:
+                        parent = ES_doc['_parent']
+                else:
+                    # Document not found in elasticsearch,
+                    # Seems like something went wrong during replication
+                    LOG.error("_search: Document id: %s has not been found "
+                                "in Elasticsearch. Due to that "
+                                "the delete/update failed.", doc['_id'])
+                    continue
+
+                # Update bufferd document to be deleted with informations about parent/routing
+                if routing is not None:
+                    list_index = None
+                    list_index = self.find_list_index(self.action_buffer, ES_doc)
+                    if list_index is not None:
+                        for idx in list_index:
+                            self.action_buffer[idx]['_routing'] = routing
+
+                if parent is not None:
+                    list_index = None
+                    list_index = self.find_list_index(self.action_buffer, ES_doc)
+                    if list_index is not None:
+                        for idx in list_index:
+                            self.action_buffer[idx]['_parent'] = parent
+
+        for idx, doc in enumerate(self.action_buffer):
+            parent = None
+            routing = None
+            if doc['_type'] in self.docman.routing:
+                if '_parent' in doc:
+                    parent = doc['_parent']
+                if '_routing' in doc:
+                    routing = doc['_routing']
+
+                if parent is None and routing is None:
+                    dict_key = str(marked_doc['_id']) + str(u(marked_doc['_type']))
+                    if dict_key in dict_idType_routing:
+                        parentInfo = None
+                        routingInfo = None
+                        doc_routing_info = dict_idType_routing[dict_key]
+                        if '_parent' in doc_routing_info:
+                            parentInfo = doc_routing_info['_parent']
+                        if '_routing' in doc_routing_info:
+                            routingInfo = doc_routing_info['_routing']
+
+                        if parentInfo is not None:
+                            self.action_buffer[idx]['_parent'] = parentInfo
+                        if routingInfo is not None:
+                            self.action_buffer[idx]['_routing'] = routingInfo
+
+    @wrap_exceptions
+    def update_sources_reloaded(self):
+        """Update local sources based on response from Elasticsearch"""
+        ES_documents = self.get_docs_sources_from_ES(self.doc_to_update)
+
+        for doc, update_spec, action_buffer_index, get_from_ES in self.doc_to_update:
+            routing = None
+            parent = None
+
+            # Update source based on response from ES
+            ES_doc = self.find_in_ES_fetched(ES_documents, doc)
+            if ES_doc is not None and ES_doc['_source'] is not None:
+                source = ES_doc['_source']
+                if '_routing' in ES_doc:
+                    routing = ES_doc['_routing']
+                if '_parent' in ES_doc:
+                    parent = ES_doc['_parent']
+            else:
+                # Document not found in elasticsearch,
+                # Seems like something went wrong during replication
+                LOG.error("_search: Document id: %s has not been found "
+                          "in Elasticsearch. Due to that "
+                          "following update failed: %s", doc['_id'], update_spec)
+                self.reset_action(action_buffer_index)
+                continue
+
+
+            updated = self.docman.apply_update(source, update_spec)
+
+            # Remove _id field from source
+            if '_id' in updated:
+                del updated['_id']
+
+            # Everytime update locally stored sources to keep them up-to-date
+            self.add_to_sources(doc, updated)
+
+            self.action_buffer[action_buffer_index]['_source'] = self.docman._formatter.format_document(updated)
+            if routing is not None:
+                self.action_buffer[action_buffer_index]['_routing'] = routing
+                doc['_routing'] = routing
+            if parent is not None:
+                self.action_buffer[action_buffer_index]['_parent'] = parent
+                doc['_parent'] = parent
+            self.action_buffer[action_buffer_index]['_id'] = str(self.action_buffer[action_buffer_index]['_id'])
+
+        # Remove empty actions if there were errors
+        self.action_buffer = [each_action for each_action in self.action_buffer if each_action]
 
     def find_list_index(self, lst, value):
         match_index = []
@@ -985,10 +1129,16 @@ class BulkBuffer(object):
 
         # Get sources for documents which are in Elasticsearch
         # and they are not in local buffer
-        if self.doc_to_update:
-            self.update_sources()
 
-        self.update_documents_to_be_deleted()
+        # if self.doc_to_update:
+        #     self.update_sources()
+        #
+        # self.update_documents_to_be_deleted()
+
+        if self.doc_to_update:
+            self.update_sources_reloaded()
+
+        self.update_documents_from_buffer()
 
         ES_buffer = self.action_buffer
         self.clean_up()
