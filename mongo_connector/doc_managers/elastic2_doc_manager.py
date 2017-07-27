@@ -938,13 +938,13 @@ class BulkBuffer(object):
                 #Update bufferd document to be deleted with informations about parent/routing
                 if routing is not None:
                     list_index = self.find_list_index(self.action_buffer, ES_doc)
-                    if list_index is not None:
+                    if len(list_index) > 0:
                         for idx in list_index:
                             self.action_buffer[idx]['_routing'] = routing
 
                 if parent is not None:
                     list_index = self.find_list_index(self.action_buffer, ES_doc)
-                    if list_index is not None:
+                    if len(list_index) > 0:
                         for idx in list_index:
                             self.action_buffer[idx]['_parent'] = parent
 
@@ -1007,14 +1007,14 @@ class BulkBuffer(object):
                 if routing is not None:
                     list_index = None
                     list_index = self.find_list_index(self.action_buffer, ES_doc)
-                    if list_index is not None:
+                    if len(list_index) > 0:
                         for idx in list_index:
                             self.action_buffer[idx]['_routing'] = routing
 
                 if parent is not None:
                     list_index = None
                     list_index = self.find_list_index(self.action_buffer, ES_doc)
-                    if list_index is not None:
+                    if len(list_index) > 0:
                         for idx in list_index:
                             self.action_buffer[idx]['_parent'] = parent
 
@@ -1096,8 +1096,7 @@ class BulkBuffer(object):
         for idx, doc in enumerate(lst):
             if doc['_type'] == value['_type'] and str(doc['_id']) == str(value['_id']):
                 match_index.append(idx)
-                return match_index
-        return None
+        return match_index
 
     def reset_action(self, action_buffer_index):
         """Reset specific action as update failed"""
