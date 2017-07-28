@@ -979,7 +979,7 @@ class BulkBuffer(object):
                 list_idx_of_docs_to_remove_from_query_list.append(idxd)
 
         # Remove entries that have already been found in buffer
-        for i in list_idx_of_docs_to_remove_from_query_list:
+        for i,doc in enumerate(list_idx_of_docs_to_remove_from_query_list):
             del docs_to_query_ES_for_info[i]
 
         # For all documents be deleted get sources from ES
