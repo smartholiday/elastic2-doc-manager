@@ -813,65 +813,6 @@ class BulkBuffer(object):
                 }
             }
 
-    @wrap_exceptions
-    def update_sources(self):
-        """Update local sources based on response from Elasticsearch"""
-        ES_documents = self.get_docs_sources_from_ES(self.doc_to_update)
-
-        for doc, update_spec, action_buffer_index, get_from_ES in self.doc_to_update:
-            routing = None
-            parent = None
-            if get_from_ES:
-                # Update source based on response from ES
-                ES_doc = self.find_in_ES_fetched(ES_documents, doc)
-                if ES_doc is not None and ES_doc['_source'] is not None:
-                    source = ES_doc['_source']
-                    if '_routing' in ES_doc:
-                        routing = ES_doc['_routing']
-                    if '_parent' in ES_doc:
-                        parent = ES_doc['_parent']
-                else:
-                    # Document not found in elasticsearch,
-                    # Seems like something went wrong during replication
-                    LOG.error("_search: Document id: %s has not been found "
-                              "in Elasticsearch. Due to that "
-                              "following update failed: %s", doc['_id'], update_spec)
-                    self.reset_action(action_buffer_index)
-                    continue
-            else:
-                # Get source stored locally before applying update
-                # as it is up-to-date
-                source = self.get_from_sources(doc['_index'],
-                                               doc['_type'],
-                                               doc['_id'])
-                if not source:
-                    LOG.error("search: Document id: %s has not been found "
-                              "in local sources. Due to that following "
-                              "update failed: %s", doc["_id"], update_spec)
-                    self.reset_action(action_buffer_index)
-                    continue
-
-            updated = self.docman.apply_update(source, update_spec)
-
-            # Remove _id field from source
-            if '_id' in updated:
-                del updated['_id']
-
-            # Everytime update locally stored sources to keep them up-to-date
-            self.add_to_sources(doc, updated)
-
-            self.action_buffer[action_buffer_index]['_source'] = self.docman._formatter.format_document(updated)
-            if routing is not None:
-                self.action_buffer[action_buffer_index]['_routing'] = routing
-                doc['_routing'] = routing
-            if parent is not None:
-                self.action_buffer[action_buffer_index]['_parent'] = parent
-                doc['_parent'] = parent
-            self.action_buffer[action_buffer_index]['_id'] = str(self.action_buffer[action_buffer_index]['_id'])
-
-        # Remove empty actions if there were errors
-        self.action_buffer = [each_action for each_action in self.action_buffer if each_action]
-
     def find_in_ES_fetched(self, lst, value):
         for doc in lst:
             if u(doc[u'_type']) == u(value['_type']) and u(doc['_id']) == u(value['_id']):
@@ -879,85 +820,7 @@ class BulkBuffer(object):
         return None
 
     @wrap_exceptions
-    def update_documents_to_be_deleted(self):
-        """Update local sources based on response from Elasticsearch"""
-        docs_to_query_for_info = []
-        list_idx_of_docs_to_delete = []
-
-        # Get from buffer all documents to be deleted and needing a routing value
-        for doc in self.action_buffer:
-            if doc['_op_type'] == "delete":
-                if doc['_type'] in self.docman.routing:
-                    docs_to_query_for_info.append(doc)
-
-        # Search in buffer if for any document to be deleted there is also a upsert request for the same document
-        # that would allow us to get routing informations
-        for idxd, marked_doc in enumerate(docs_to_query_for_info):
-            parent = None
-            routing = None
-
-            # For any document to be deleted search in buffer if there is an upsert request for the same document
-            # and get routing fields
-            for idx, doc in enumerate(self.action_buffer):
-                if doc['_type'] == marked_doc['_type'] and doc['_id'] == marked_doc['_id'] and doc['_op_type'] == "index":
-                    if '_parent' in doc:
-                        parent = doc['_parent']
-                    if '_routing' in doc:
-                        routing = doc['_routing']
-                    break
-
-            # If for a document to be deleted we have found routing values we will update into the buffer that document to
-            # be deleted with these routing values
-            if parent is not None or routing is not None:
-                for idx, doc in enumerate(self.action_buffer):
-                    if doc['_type'] == marked_doc['_type'] and doc['_id'] == marked_doc['_id'] and doc['_op_type'] == "delete":
-                        if parent is not None:
-                            self.action_buffer[idx]['_parent'] = parent
-                        if routing is not None:
-                            self.action_buffer[idx]['_routing'] = routing
-                        if '_parent' in self.action_buffer[idx] or '_routing' in self.action_buffer[idx]:
-                            list_idx_of_docs_to_delete.append(idxd)
-                            break
-
-        for i in list_idx_of_docs_to_delete:
-            del docs_to_query_for_info[i]
-
-        # For all documents be deleted get sources from ES
-        ES_documents = self.get_docs_to_update_sources_from_ES(docs_to_query_for_info)
-        if ES_documents is not None:
-            for ES_doc in ES_documents:
-                routing = None
-                parent = None
-
-                # For each document from ES get informations about parent and routing if these exist
-                if ES_doc is not None and ES_doc['_source']:
-                    if '_routing' in ES_doc:
-                        routing = ES_doc['_routing']
-                    if '_parent' in ES_doc:
-                        parent = ES_doc['_parent']
-                else:
-                    # Document not found in elasticsearch,
-                    # Seems like something went wrong during replication
-                    LOG.error("_search: Document id: %s has not been found "
-                              "in Elasticsearch. Due to that "
-                              "the delete failed.", doc['_id'])
-                    continue
-
-                #Update bufferd document to be deleted with informations about parent/routing
-                if routing is not None:
-                    list_index = self.find_list_index(self.action_buffer, ES_doc)
-                    if len(list_index) > 0:
-                        for idx in list_index:
-                            self.action_buffer[idx]['_routing'] = routing
-
-                if parent is not None:
-                    list_index = self.find_list_index(self.action_buffer, ES_doc)
-                    if len(list_index) > 0:
-                        for idx in list_index:
-                            self.action_buffer[idx]['_parent'] = parent
-
-    @wrap_exceptions
-    def update_documents_from_buffer(self):
+    def update_documents_from_buffer_for_delete(self):
         """Update buffered sources based on response from Elasticsearch"""
 
         docs_to_query_ES_for_info = []
@@ -1137,15 +1000,10 @@ class BulkBuffer(object):
         # Get sources for documents which are in Elasticsearch
         # and they are not in local buffer
 
-        # if self.doc_to_update:
-        #     self.update_sources()
-        #
-        # self.update_documents_to_be_deleted()
-
         if self.doc_to_update:
             self.update_sources_reloaded()
 
-        self.update_documents_from_buffer()
+        self.update_documents_from_buffer_for_delete()
 
         ES_buffer = self.action_buffer
         self.clean_up()
