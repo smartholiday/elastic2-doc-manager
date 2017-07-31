@@ -308,8 +308,11 @@ class DocManager(DocManagerBase):
                 self.elastic.indices.delete(index=_db.lower())
 
         if doc.get('renameCollection'):
-            raise errors.OperationFailed(
-                "elastic_doc_manager does not support renaming a mapping.")
+            dbs = self.command_helper.map_db(db)
+            if len(dbs) > 0:
+                raise errors.OperationFailed(
+                    "elastic_doc_manager does not support renaming a mapping.")
+
 
         if doc.get('create'):
             db, coll = self.command_helper.map_collection(db, doc['create'])
@@ -343,6 +346,7 @@ class DocManager(DocManagerBase):
         """Apply updates given in update_spec to the document whose id
         matches that of doc.
         """
+        LOG.error("U - %s - %s - %s", document_id, namespace, timestamp)
 
         index, doc_type = self._index_and_mapping(namespace)
 
@@ -377,10 +381,13 @@ class DocManager(DocManagerBase):
         index, doc_type = self._index_and_mapping(namespace)
         # No need to duplicate '_id' in source document
         doc_id = u(doc.pop("_id"))
+
         if self.is_float(doc_id):
             doc_id = int(float(doc_id))
         else:
             doc_id = str(doc_id)
+
+        LOG.error("I - %s - %s - %s", doc_id, namespace, timestamp)
 
         metadata = {
             'ns': namespace,
@@ -539,6 +546,7 @@ class DocManager(DocManagerBase):
 
     @wrap_exceptions
     def remove(self, document_id, namespace, timestamp):
+        LOG.error("R - %s - %s - %s", document_id, namespace,timestamp)
         """Remove a document from Elasticsearch."""
         index, doc_type = self._index_and_mapping(namespace)
 
