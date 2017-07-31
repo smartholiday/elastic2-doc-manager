@@ -824,7 +824,6 @@ class BulkBuffer(object):
         """Update buffered sources based on response from Elasticsearch"""
 
         docs_to_query_ES_for_info = []
-        list_idx_of_docs_to_remove_from_query_list = []
         #Map of documents having parent/routing information
         dict_idType_routing = {}
 
@@ -839,19 +838,12 @@ class BulkBuffer(object):
                 if '_routing' in doc:
                     routing = doc['_routing']
 
+                id_key = str(doc['_id']) + str(u(doc['_type']))
                 if parent is not None or routing is not None:
-                    dict_idType_routing[str(doc['_id']) + str(u(doc['_type']))] =  doc
+                    dict_idType_routing[id_key] = doc
                 else:
-                    docs_to_query_ES_for_info.append(doc)
-
-        for idxd, marked_doc in enumerate(docs_to_query_ES_for_info):
-            dict_key = str(marked_doc['_id']) + str(u(marked_doc['_type']))
-            if dict_key in dict_idType_routing:
-                list_idx_of_docs_to_remove_from_query_list.append(idxd)
-
-        # Remove entries that have already been found in buffer
-        for i,doc in enumerate(list_idx_of_docs_to_remove_from_query_list):
-            del docs_to_query_ES_for_info[i]
+                    if dict_idType_routing[id_key] is None:
+                        docs_to_query_ES_for_info.append(doc)
 
         # For all documents be deleted get sources from ES
         ES_documents = self.get_docs_to_update_sources_from_ES(docs_to_query_ES_for_info)
@@ -861,33 +853,14 @@ class BulkBuffer(object):
                 parent = None
 
                 # For each document from ES get informations about parent and routing if these exist
-                if ES_doc is not None and ES_doc['_source']:
+                if ES_doc is not None :
                     if '_routing' in ES_doc:
                         routing = ES_doc['_routing']
                     if '_parent' in ES_doc:
                         parent = ES_doc['_parent']
-                else:
-                    # Document not found in elasticsearch,
-                    # Seems like something went wrong during replication
-                    LOG.error("_search: Document id: %s has not been found "
-                                "in Elasticsearch. Due to that "
-                                "the delete/update failed.", doc['_id'])
-                    continue
 
-                # Update bufferd document to be deleted with informations about parent/routing
-                if routing is not None:
-                    list_index = None
-                    list_index = self.find_list_index(self.action_buffer, ES_doc)
-                    if len(list_index) > 0:
-                        for idx in list_index:
-                            self.action_buffer[idx]['_routing'] = routing
-
-                if parent is not None:
-                    list_index = None
-                    list_index = self.find_list_index(self.action_buffer, ES_doc)
-                    if len(list_index) > 0:
-                        for idx in list_index:
-                            self.action_buffer[idx]['_parent'] = parent
+                    if parent is not None or routing is not None:
+                        dict_idType_routing[str(doc['_id']) + str(u(doc['_type']))] = ES_doc
 
         for idx, doc in enumerate(self.action_buffer):
             parent = None
@@ -925,21 +898,12 @@ class BulkBuffer(object):
 
             # Update source based on response from ES
             ES_doc = self.find_in_ES_fetched(ES_documents, doc)
-            if ES_doc is not None and ES_doc['_source'] is not None:
+            if ES_doc is not None:
                 source = ES_doc['_source']
                 if '_routing' in ES_doc:
                     routing = ES_doc['_routing']
                 if '_parent' in ES_doc:
                     parent = ES_doc['_parent']
-            else:
-                # Document not found in elasticsearch,
-                # Seems like something went wrong during replication
-                LOG.error("_search: Document id: %s has not been found "
-                          "in Elasticsearch. Due to that "
-                          "following update failed: %s", doc['_id'], update_spec)
-                self.reset_action(action_buffer_index)
-                continue
-
 
             updated = self.docman.apply_update(source, update_spec)
 
