@@ -872,7 +872,7 @@ class BulkBuffer(object):
                     routing = doc['_routing']
 
                 if parent is None and routing is None:
-                    dict_key = str(marked_doc['_id']) + str(u(marked_doc['_type']))
+                    dict_key = str(doc['_id']) + str(u(doc['_type']))
                     if dict_key in dict_idType_routing:
                         parentInfo = None
                         routingInfo = None
