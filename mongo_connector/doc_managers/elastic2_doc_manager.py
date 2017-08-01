@@ -905,23 +905,23 @@ class BulkBuffer(object):
                 if '_parent' in ES_doc:
                     parent = ES_doc['_parent']
 
-            updated = self.docman.apply_update(source, update_spec)
+                updated = self.docman.apply_update(source, update_spec)
 
-            # Remove _id field from source
-            if '_id' in updated:
-                del updated['_id']
+                # Remove _id field from source
+                if '_id' in updated:
+                    del updated['_id']
 
-            # Everytime update locally stored sources to keep them up-to-date
-            self.add_to_sources(doc, updated)
+                # Everytime update locally stored sources to keep them up-to-date
+                self.add_to_sources(doc, updated)
 
-            self.action_buffer[action_buffer_index]['_source'] = self.docman._formatter.format_document(updated)
-            if routing is not None:
-                self.action_buffer[action_buffer_index]['_routing'] = routing
-                doc['_routing'] = routing
-            if parent is not None:
-                self.action_buffer[action_buffer_index]['_parent'] = parent
-                doc['_parent'] = parent
-            self.action_buffer[action_buffer_index]['_id'] = str(self.action_buffer[action_buffer_index]['_id'])
+                self.action_buffer[action_buffer_index]['_source'] = self.docman._formatter.format_document(updated)
+                if routing is not None:
+                    self.action_buffer[action_buffer_index]['_routing'] = routing
+                    doc['_routing'] = routing
+                if parent is not None:
+                    self.action_buffer[action_buffer_index]['_parent'] = parent
+                    doc['_parent'] = parent
+                self.action_buffer[action_buffer_index]['_id'] = str(self.action_buffer[action_buffer_index]['_id'])
 
         # Remove empty actions if there were errors
         self.action_buffer = [each_action for each_action in self.action_buffer if each_action]
