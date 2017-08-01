@@ -842,7 +842,7 @@ class BulkBuffer(object):
                 if parent is not None or routing is not None:
                     dict_idType_routing[id_key] = doc
                 else:
-                    if dict_idType_routing[id_key] is None:
+                    if id_key not in dict_idType_routing:
                         docs_to_query_ES_for_info.append(doc)
 
         # For all documents be deleted get sources from ES
