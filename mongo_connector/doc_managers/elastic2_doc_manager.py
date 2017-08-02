@@ -685,6 +685,7 @@ class BulkBuffer(object):
         self.doc_to_update = []
 
     def get_buffer(self):
+        LOG.error("xxx")
         """Get buffer which needs to be bulked to elasticsearch"""
 
         # Get sources for documents which are in Elasticsearch
