@@ -860,7 +860,8 @@ class BulkBuffer(object):
                         parent = ES_doc['_parent']
 
                     if parent is not None or routing is not None:
-                        dict_idType_routing[str(doc['_id']) + str(u(doc['_type']))] = ES_doc
+                        id_key = str(ES_doc['_id']) + str(u(ES_doc['_type']))
+                        dict_idType_routing[id_key] = ES_doc
 
         for idx, doc in enumerate(self.action_buffer):
             parent = None
