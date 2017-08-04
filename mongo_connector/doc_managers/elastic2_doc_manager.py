@@ -162,7 +162,7 @@ class DocManager(DocManagerBase):
     """
 
     def __init__(self, url, auto_commit_interval=DEFAULT_COMMIT_INTERVAL,
-                 unique_key='_id', chunk_size=450,
+                 unique_key='_id', chunk_size=4000,
                  meta_index_name="mongodb_meta", meta_type="mongodb_meta",
                  attachment_field="content",
                  **kwargs):
