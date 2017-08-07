@@ -49,6 +49,7 @@ from mongo_connector.doc_managers.doc_manager_base import DocManagerBase
 from mongo_connector.doc_managers.formatters import DefaultDocumentFormatter
 
 _HAS_AWS = True
+
 try:
     from boto3 import session
     from requests_aws_sign import AWSV4Sign
@@ -68,6 +69,7 @@ DEFAULT_SEND_INTERVAL = 5
 """The default interval in seconds to send buffered operations."""
 
 DEFAULT_AWS_REGION = 'us-east-1'
+SEARCH_RESULT_SIZE = 1024
 
 __version__ = '0.3.0'
 """Elasticsearch 2.X DocManager version."""
@@ -162,7 +164,7 @@ class DocManager(DocManagerBase):
     """
 
     def __init__(self, url, auto_commit_interval=DEFAULT_COMMIT_INTERVAL,
-                 unique_key='_id', chunk_size=4000,
+                 unique_key='_id', chunk_size=DEFAULT_MAX_BULK,
                  meta_index_name="mongodb_meta", meta_type="mongodb_meta",
                  attachment_field="content",
                  **kwargs):
@@ -351,7 +353,6 @@ class DocManager(DocManagerBase):
         """Apply updates given in update_spec to the document whose id
         matches that of doc.
         """
-        LOG.error("U - %s - %s - %s", document_id, namespace, timestamp)
 
         index, doc_type = self._index_and_mapping(namespace)
 
@@ -391,8 +392,6 @@ class DocManager(DocManagerBase):
             doc_id = int(float(doc_id))
         else:
             doc_id = str(doc_id)
-
-        LOG.error("I - %s - %s - %s", doc_id, namespace, timestamp)
 
         metadata = {
             'ns': namespace,
@@ -553,7 +552,6 @@ class DocManager(DocManagerBase):
 
     @wrap_exceptions
     def remove(self, document_id, namespace, timestamp):
-        LOG.error("R - %s - %s - %s", document_id, namespace,timestamp)
         """Remove a document from Elasticsearch."""
         index, doc_type = self._index_and_mapping(namespace)
 
@@ -635,7 +633,7 @@ class DocManager(DocManagerBase):
                               "operations", successes)
                     if errors:
                         LOG.error(
-                            "Bulk request finished with errors: %r", errors)
+                            "Bulk request finished with %d errors: %r", len(errors), errors)
             except es_exceptions.ElasticsearchException:
                 LOG.exception("Bulk request failed with exception")
 
@@ -798,7 +796,7 @@ class BulkBuffer(object):
             es_subquery.append(self.build_search_subquery(doc))
         query = {
                     "from" : 0,
-                    "size" : DEFAULT_MAX_BULK,
+                    "size" : SEARCH_RESULT_SIZE,
                     "query": {
                         "bool": {
                             "should": [
@@ -857,9 +855,14 @@ class BulkBuffer(object):
                     if id_key not in dict_idType_routing:
                         docs_to_query_ES_for_info.append(doc)
 
-        # For all documents be deleted get sources from ES
-        ES_documents = self.get_docs_to_update_sources_from_ES(docs_to_query_ES_for_info)
-        if ES_documents is not None:
+        # For all documents to be deleted get sources from ES
+        ES_documents = []
+        chunks = [docs_to_query_ES_for_info[x:x + SEARCH_RESULT_SIZE] for x in xrange(0, len(docs_to_query_ES_for_info), SEARCH_RESULT_SIZE)]
+        for chunk in chunks:
+            ES_chunk = self.get_docs_to_update_sources_from_ES(chunk)
+            ES_documents = ES_documents + ES_chunk
+
+        if len(ES_documents) > 0:
             for ES_doc in ES_documents:
                 routing = None
                 parent = None
@@ -903,7 +906,11 @@ class BulkBuffer(object):
     @wrap_exceptions
     def update_sources_reloaded(self):
         """Update local sources based on response from Elasticsearch"""
-        ES_documents = self.get_docs_sources_from_ES(self.doc_to_update)
+        ES_documents = []
+        chunks = [self.doc_to_update[x:x + SEARCH_RESULT_SIZE] for x in xrange(0, len(self.doc_to_update), SEARCH_RESULT_SIZE)]
+        for chunk in chunks:
+            ES_chunk = self.get_docs_sources_from_ES(chunk)
+            ES_documents = ES_documents + ES_chunk
 
         for doc, update_spec, action_buffer_index, get_from_ES in self.doc_to_update:
             routing = None
