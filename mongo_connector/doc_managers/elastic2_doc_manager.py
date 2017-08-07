@@ -331,10 +331,13 @@ class DocManager(DocManagerBase):
                 warnings.warn("Deleting all documents of type %s on index %s."
                               "The mapping definition will persist and must be"
                               "removed manually." % (coll, db))
+                kw = {}
+                if self.chunk_size > 0:
+                    kw['chunk_size'] = self.chunk_size
                 responses = streaming_bulk(
                     self.elastic,
                     (dict(result, _op_type='delete') for result in scan(
-                        self.elastic, index=db.lower(), doc_type=coll)))
+                        self.elastic, index=db.lower(), doc_type=coll)), **kw)
                 for ok, resp in responses:
                     if not ok:
                         LOG.error(
@@ -618,7 +621,10 @@ class DocManager(DocManagerBase):
             try:
                 action_buffer = self.BulkBuffer.get_buffer()
                 if action_buffer:
-                    successes, errors = bulk(self.elastic, action_buffer)
+                    kw = {}
+                    if self.chunk_size > 0:
+                        kw['chunk_size'] = self.chunk_size
+                    successes, errors = bulk(self.elastic, action_buffer, **kw)
                     LOG.debug("Bulk request finished, successfully sent %d "
                               "operations", successes)
                     if errors:
