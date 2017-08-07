@@ -334,6 +334,8 @@ class DocManager(DocManagerBase):
                 kw = {}
                 if self.chunk_size > 0:
                     kw['chunk_size'] = self.chunk_size
+                kw['raise_on_error'] = False
+                kw['raise_on_exception'] = False
                 responses = streaming_bulk(
                     self.elastic,
                     (dict(result, _op_type='delete') for result in scan(
@@ -475,6 +477,8 @@ class DocManager(DocManagerBase):
             kw = {}
             if self.chunk_size > 0:
                 kw['chunk_size'] = self.chunk_size
+            kw['raise_on_error'] = False
+            kw['raise_on_exception'] = False
 
             responses = streaming_bulk(client=self.elastic,
                                        actions=docs_to_upsert(),
@@ -624,6 +628,8 @@ class DocManager(DocManagerBase):
                     kw = {}
                     if self.chunk_size > 0:
                         kw['chunk_size'] = self.chunk_size
+                    kw['raise_on_error'] = False
+                    kw['raise_on_exception'] = False
                     successes, errors = bulk(self.elastic, action_buffer, **kw)
                     LOG.debug("Bulk request finished, successfully sent %d "
                               "operations", successes)
